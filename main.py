@@ -54,8 +54,17 @@ async def validate_api_key(request: Request, call_next):
         if path.startswith(prefix):
             return await call_next(request)
 
-    # Validate key
-    api_key = request.query_params.get("key")
+    # Validate key from headers
+    api_key = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[7:]
+        else:
+            api_key = auth_header
+
+    if not api_key:
+        api_key = request.headers.get("X-API-Key")
 
     if not settings.service_api_key:
         return JSONResponse(
@@ -63,7 +72,7 @@ async def validate_api_key(request: Request, call_next):
             content={"detail": "SERVICE_API_KEY not configured on server"},
         )
 
-    if api_key != settings.service_api_key:
+    if not api_key or api_key != settings.service_api_key:
         return JSONResponse(
             status_code=403,
             content={"detail": "Invalid or missing API key"},

@@ -216,15 +216,17 @@ View and edit system prompts at runtime without restarting the service. Changes 
 #### Examples
 ```bash
 # View all prompts
-curl "http://localhost:8001/prompts/?key=change-me-secret"
+curl -H "Authorization: Bearer change-me-secret" "http://localhost:8001/prompts/"
 
 # Update the queries prompt
-curl -X PUT "http://localhost:8001/prompts/queries?key=change-me-secret" \
+curl -X PUT "http://localhost:8001/prompts/queries" \
+  -H "Authorization: Bearer change-me-secret" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "You are a search expert. Generate 5 queries as JSON..."}'
 
 # Reset insight prompt to default
-curl -X DELETE "http://localhost:8001/prompts/insight?key=change-me-secret"
+curl -X DELETE "http://localhost:8001/prompts/insight" \
+  -H "Authorization: Bearer change-me-secret"
 ```
 
 ---
@@ -245,25 +247,29 @@ Change the LLM model and generation parameters at runtime without restarting. Ch
 #### Examples
 ```bash
 # View all current settings
-curl "http://localhost:8001/settings/?key=change-me-secret"
+curl -H "Authorization: Bearer change-me-secret" "http://localhost:8001/settings/"
 
 # Switch the queries model to llama3.2
-curl -X PUT "http://localhost:8001/settings/queries_model?key=change-me-secret" \
+curl -X PUT "http://localhost:8001/settings/queries_model" \
+  -H "Authorization: Bearer change-me-secret" \
   -H "Content-Type: application/json" \
   -d '{"value": "llama3.2:latest"}'
 
 # Change temperature to 0.7
-curl -X PUT "http://localhost:8001/settings/temperature?key=change-me-secret" \
+curl -X PUT "http://localhost:8001/settings/temperature" \
+  -H "Authorization: Bearer change-me-secret" \
   -H "Content-Type: application/json" \
   -d '{"value": 0.7}'
 
 # Increase max tokens
-curl -X PUT "http://localhost:8001/settings/max_tokens?key=change-me-secret" \
+curl -X PUT "http://localhost:8001/settings/max_tokens" \
+  -H "Authorization: Bearer change-me-secret" \
   -H "Content-Type: application/json" \
   -d '{"value": 4096}'
 
 # Reset insight model to .env default
-curl -X DELETE "http://localhost:8001/settings/insight_model?key=change-me-secret"
+curl -X DELETE "http://localhost:8001/settings/insight_model" \
+  -H "Authorization: Bearer change-me-secret"
 ```
 
 ---
@@ -292,11 +298,12 @@ SERVICE_API_KEY=change-me-secret
 ALLOWED_ORIGIN=http://localhost:8000
 ```
 
-Update `multisource-fastapi/.env` to point the webhooks here:
+Update `multisource-fastapi/.env` to point the webhooks here (without the query parameter):
 ```env
-QUERIES_GENERATOR_WEBHOOK=http://localhost:8001/webhook/queries-generator?key=change-me-secret
-AI_USERSTORY_GENERATOR_WEBHOOK=http://localhost:8001/webhook/ai-userstory-generator?key=change-me-secret
-INSIGHT_GENERATOR_WEBHOOK=http://localhost:8001/webhook/insight-generator?key=change-me-secret
+QUERIES_GENERATOR_WEBHOOK=http://localhost:8001/webhook/queries-generator
+AI_USERSTORY_GENERATOR_WEBHOOK=http://localhost:8001/webhook/ai-userstory-generator
+INSIGHT_GENERATOR_WEBHOOK=http://localhost:8001/webhook/insight-generator
+LLM_API_KEY=change-me-secret
 ```
 
 ---
@@ -328,7 +335,7 @@ The response is parsed from `choices[0].message.content`, expected to be a **raw
 
 ## 🔐 Security
 
-Incoming requests to the **webhook, prompts, and settings endpoints** are validated via a query-parameter API key (`?key=...`), matching the pattern in `multisource-fastapi`.
+Incoming requests to the **webhook, prompts, and settings endpoints** are validated via the `Authorization` header (`Bearer <key>`) or the `X-API-Key` header, matching the configuration in `multisource-fastapi`.
 
 The `/openwebui/*` **proxy routes are excluded** from key validation — they are intended for local use only (the service itself only listens on `localhost:8001`).
 
@@ -357,8 +364,8 @@ uvicorn main:app --reload --port 8001
 
 - Swagger UI → `http://localhost:8001/docs`
 - Proxy test → `curl http://localhost:8001/openwebui/api/tags`
-- Settings → `curl http://localhost:8001/settings/?key=change-me-secret`
-- Prompts → `curl http://localhost:8001/prompts/?key=change-me-secret`
+- Settings → `curl -H "Authorization: Bearer change-me-secret" http://localhost:8001/settings/`
+- Prompts → `curl -H "Authorization: Bearer change-me-secret" http://localhost:8001/prompts/`
 
 ---
 
