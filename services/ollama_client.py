@@ -2,6 +2,7 @@ import httpx
 import json
 import re
 from config import settings
+from services.settings_manager import get_setting
 from fastapi import HTTPException
 
 
@@ -25,9 +26,9 @@ async def chat_completion(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        "temperature": temperature or settings.temperature,
-        "max_tokens": max_tokens or settings.max_tokens,
-        "top_p": settings.top_p,
+        "temperature": temperature if temperature is not None else get_setting("temperature"),
+        "max_tokens": max_tokens if max_tokens is not None else get_setting("max_tokens"),
+        "top_p": get_setting("top_p"),
         "stream": False,
     }
 

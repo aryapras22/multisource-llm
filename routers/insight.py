@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from schemas import InsightRequest, InsightResponse, InsightOutput, FitScore
 from services.ollama_client import chat_completion
 from services.prompt_manager import get_prompt
-from config import settings
+from services.settings_manager import get_setting
 
 router = APIRouter(prefix="/webhook", tags=["Insight Generator"])
 
@@ -32,7 +32,7 @@ async def generate_insight(payload: InsightRequest):
     result = await chat_completion(
         system_prompt=get_prompt("insight"),
         user_message=user_message,
-        model=settings.insight_model,
+        model=get_setting("insight_model"),
     )
 
     # Validate the result structure

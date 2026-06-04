@@ -7,6 +7,8 @@ from routers.userstory import router as userstory_router
 from routers.insight import router as insight_router
 from routers.openwebui_proxy import router as openwebui_router
 from routers.prompts import router as prompts_router
+from routers.settings import router as settings_router
+from services.settings_manager import get_all_settings
 
 app = FastAPI(
     title="llm-fastapi",
@@ -74,14 +76,20 @@ async def validate_api_key(request: Request, call_next):
 # ── Root endpoint ──────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
+    current = get_all_settings()
     return {
         "service": "llm-fastapi",
         "status": "running",
         "ollama_url": settings.ollama_base_url,
         "models": {
-            "queries": settings.queries_model,
-            "userstory": settings.userstory_model,
-            "insight": settings.insight_model,
+            "queries": current["queries_model"],
+            "userstory": current["userstory_model"],
+            "insight": current["insight_model"],
+        },
+        "hyperparameters": {
+            "temperature": current["temperature"],
+            "max_tokens": current["max_tokens"],
+            "top_p": current["top_p"],
         },
     }
 
@@ -92,3 +100,4 @@ app.include_router(userstory_router)
 app.include_router(insight_router)
 app.include_router(openwebui_router)
 app.include_router(prompts_router)
+app.include_router(settings_router)

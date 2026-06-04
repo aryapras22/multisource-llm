@@ -8,7 +8,7 @@ from schemas import (
 )
 from services.ollama_client import chat_completion
 from services.prompt_manager import get_prompt
-from config import settings
+from services.settings_manager import get_setting
 
 router = APIRouter(prefix="/webhook", tags=["AI User Story Generator"])
 
@@ -35,7 +35,7 @@ async def generate_user_stories(payload: MessageRequest):
     result = await chat_completion(
         system_prompt=get_prompt("userstory"),
         user_message=payload.message,
-        model=settings.userstory_model,
+        model=get_setting("userstory_model"),
     )
 
     # Extract the user stories list

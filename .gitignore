@@ -5,3 +5,4 @@ __pycache__/
 *.pyo
 .DS_Store
 prompts/_overrides.json
+prompts/_settings_overrides.json

@@ -16,8 +16,10 @@ multisource-fastapi
         │  POST /webhook/insight-generator
         ▼
    llm-fastapi (port 8001)
-        │  ◄──── system prompt + hyperparameters (per endpoint)
+        │  ◄──── system prompt + hyperparameters (runtime-configurable via API)
         │  ◄──── /openwebui/...  (direct proxy for manual requests)
+        │  ◄──── /prompts/...    (view & edit system prompts at runtime)
+        │  ◄──── /settings/...   (view & edit models + hyperparams at runtime)
         │
         │  POST /api/chat   (Ollama OpenAI-compatible)
         ▼
@@ -35,26 +37,31 @@ multisource-fastapi
 
 ```
 llm-fastapi/
-├── main.py                  # FastAPI app, CORS, API-key middleware, router mounts
-├── config.py                # Pydantic settings (reads from .env)
+├── main.py                      # FastAPI app, CORS, API-key middleware, router mounts
+├── config.py                    # Pydantic settings (reads from .env)
+├── schemas.py                   # Pydantic request / response models
 ├── routers/
 │   ├── __init__.py
-│   ├── queries.py           # POST /webhook/queries-generator
-│   ├── userstory.py         # POST /webhook/ai-userstory-generator
-│   ├── insight.py           # POST /webhook/insight-generator
-│   └── openwebui_proxy.py   # ANY /openwebui/{path} — transparent proxy to Ollama
+│   ├── queries.py               # POST /webhook/queries-generator
+│   ├── userstory.py             # POST /webhook/ai-userstory-generator
+│   ├── insight.py               # POST /webhook/insight-generator
+│   ├── openwebui_proxy.py       # ANY  /openwebui/{path} — transparent proxy
+│   ├── prompts.py               # GET/PUT/DELETE /prompts/{key} — runtime prompt editing
+│   └── settings.py              # GET/PUT/DELETE /settings/{key} — runtime model & hyperparam editing
 ├── services/
 │   ├── __init__.py
-│   └── ollama_client.py     # Shared async client for Ollama API
+│   ├── ollama_client.py         # Shared async client for Ollama API
+│   ├── prompt_manager.py        # In-memory prompt store with JSON persistence
+│   └── settings_manager.py      # In-memory settings store with JSON persistence
 ├── prompts/
-│   ├── queries_prompt.py    # System prompt for query generation
-│   ├── userstory_prompt.py  # System prompt for AI user story extraction
-│   └── insight_prompt.py    # System prompt for insight generation
-├── schemas.py               # Pydantic request / response models
+│   ├── queries_prompt.py        # Default system prompt for query generation
+│   ├── userstory_prompt.py      # Default system prompt for AI user story extraction
+│   └── insight_prompt.py        # Default system prompt for insight generation
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-└── Dockerfile               # (optional) for containerised deployment
+├── .dockerignore
+└── Dockerfile
 ```
 
 ---
@@ -167,96 +174,97 @@ A **transparent reverse proxy** that forwards any request (GET, POST, etc.) dire
 - Sending raw chat completions without the webhook wrapper
 - Integration with any OpenAI-compatible client pointed at `llm-fastapi`
 
-#### How it works
-
 ```
 Client  →  POST http://localhost:8001/openwebui/api/chat
                        ↓  (strip /openwebui prefix, forward body/headers as-is)
 Ollama  ←  POST http://localhost:11434/api/chat
 ```
 
-The proxy:
-- Strips the `/openwebui` prefix and forwards the remainder of the path to `http://localhost:11434`
-- Passes through the **request body**, **query parameters**, and **Content-Type** header unchanged
-- Streams the Ollama response back to the caller
-
-#### Example — list available models
+#### Examples
 ```bash
+# List available models
 curl http://localhost:8001/openwebui/api/tags
-```
 
-#### Example — raw chat completion
-```bash
+# Raw Ollama chat
 curl -X POST http://localhost:8001/openwebui/api/chat \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma3:12b",
-    "messages": [
-      { "role": "user", "content": "Hello!" }
-    ],
-    "stream": false
-  }'
-```
+  -d '{"model": "gemma3:12b", "messages": [{"role": "user", "content": "Hello!"}], "stream": false}'
 
-#### Example — OpenAI-compatible chat completions
-```bash
+# OpenAI-compatible chat completions
 curl -X POST http://localhost:8001/openwebui/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma3:12b",
-    "messages": [
-      { "role": "system", "content": "You are a helpful assistant." },
-      { "role": "user",   "content": "Summarise this app review." }
-    ],
-    "temperature": 0.3,
-    "stream": false
-  }'
+  -d '{"model": "gemma3:12b", "messages": [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "Summarise this."}], "temperature": 0.3, "stream": false}'
 ```
 
-#### Implementation — `routers/openwebui_proxy.py`
+> **Note:** The proxy route is excluded from API-key middleware — call it freely from Postman, curl, or any SDK.
 
-```python
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
-import httpx
+---
 
-OLLAMA_BASE_URL = "http://localhost:11434"
+### 5. `/prompts` — Runtime Prompt Management
 
-router = APIRouter(prefix="/openwebui", tags=["OpenWebUI Proxy"])
+View and edit system prompts at runtime without restarting the service. Changes are persisted to `prompts/_overrides.json`.
 
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/prompts/` | List all current system prompts |
+| `GET` | `/prompts/{key}` | Get a single prompt |
+| `PUT` | `/prompts/{key}` | Update a prompt at runtime |
+| `DELETE` | `/prompts/{key}` | Reset prompt to code default |
 
-@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_to_ollama(path: str, request: Request):
-    """
-    Transparent reverse proxy: forwards /openwebui/{path} → Ollama at localhost:11434/{path}
-    """
-    target_url = f"{OLLAMA_BASE_URL}/{path}"
-    body = await request.body()
+**Valid keys:** `queries`, `userstory`, `insight`
 
-    async def stream_response():
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                method=request.method,
-                url=target_url,
-                content=body,
-                params=dict(request.query_params),
-                headers={"Content-Type": request.headers.get("content-type", "application/json")},
-            ) as resp:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
+#### Examples
+```bash
+# View all prompts
+curl "http://localhost:8001/prompts/?key=change-me-secret"
 
-    # Peek at content type to set response media type
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        try:
-            head = await client.head(target_url)
-            media_type = head.headers.get("content-type", "application/json")
-        except Exception:
-            media_type = "application/json"
+# Update the queries prompt
+curl -X PUT "http://localhost:8001/prompts/queries?key=change-me-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "You are a search expert. Generate 5 queries as JSON..."}'
 
-    return StreamingResponse(stream_response(), media_type=media_type)
+# Reset insight prompt to default
+curl -X DELETE "http://localhost:8001/prompts/insight?key=change-me-secret"
 ```
 
-> **Note:** The proxy route is excluded from API-key middleware validation so you can call it freely from tools like Postman, curl, or any OpenAI-compatible SDK.
+---
+
+### 6. `/settings` — Runtime Model & Hyperparameter Management
+
+Change the LLM model and generation parameters at runtime without restarting. Changes are persisted to `prompts/_settings_overrides.json`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/settings/` | List all current settings |
+| `GET` | `/settings/{key}` | Get a single setting |
+| `PUT` | `/settings/{key}` | Update a setting at runtime |
+| `DELETE` | `/settings/{key}` | Reset setting to `.env` default |
+
+**Valid keys:** `queries_model`, `userstory_model`, `insight_model`, `temperature`, `max_tokens`, `top_p`
+
+#### Examples
+```bash
+# View all current settings
+curl "http://localhost:8001/settings/?key=change-me-secret"
+
+# Switch the queries model to llama3.2
+curl -X PUT "http://localhost:8001/settings/queries_model?key=change-me-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"value": "llama3.2:latest"}'
+
+# Change temperature to 0.7
+curl -X PUT "http://localhost:8001/settings/temperature?key=change-me-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"value": 0.7}'
+
+# Increase max tokens
+curl -X PUT "http://localhost:8001/settings/max_tokens?key=change-me-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"value": 4096}'
+
+# Reset insight model to .env default
+curl -X DELETE "http://localhost:8001/settings/insight_model?key=change-me-secret"
+```
 
 ---
 
@@ -302,66 +310,25 @@ POST http://localhost:11434/v1/chat/completions
 Content-Type: application/json
 
 {
-  "model": "gemma3:12b",
+  "model": "<from /settings API or .env>",
   "messages": [
-    { "role": "system", "content": "<system prompt>" },
+    { "role": "system", "content": "<from /prompts API or code default>" },
     { "role": "user",   "content": "<user payload>" }
   ],
-  "temperature": 0.3,
-  "max_tokens": 2048,
-  "top_p": 0.9,
+  "temperature": "<from /settings API or .env>",
+  "max_tokens": "<from /settings API or .env>",
+  "top_p": "<from /settings API or .env>",
   "stream": false
 }
 ```
 
-The response is parsed from `choices[0].message.content`, expected to be a **raw JSON string** (the system prompt explicitly instructs the model to output only JSON, no markdown fences).
-
-### `services/ollama_client.py` skeleton
-
-```python
-import httpx
-from config import settings
-from fastapi import HTTPException
-import json
-
-async def chat_completion(
-    system_prompt: str,
-    user_message: str,
-    model: str,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> dict:
-    url = f"{settings.ollama_base_url}/v1/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": temperature or settings.temperature,
-        "max_tokens": max_tokens or settings.max_tokens,
-        "top_p": settings.top_p,
-        "stream": False,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        # Strip potential markdown fences
-        content = content.strip().removeprefix("```json").removesuffix("```").strip()
-        return json.loads(content)
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=503, detail=f"Cannot reach Ollama: {exc}")
-    except (KeyError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=500, detail=f"Unexpected LLM response format: {exc}")
-```
+The response is parsed from `choices[0].message.content`, expected to be a **raw JSON string**. The client auto-strips markdown fences as a safety net.
 
 ---
 
 ## 🔐 Security
 
-Incoming requests to the **webhook endpoints** are validated via a query-parameter API key (`?key=...`), matching the pattern in `multisource-fastapi`.
+Incoming requests to the **webhook, prompts, and settings endpoints** are validated via a query-parameter API key (`?key=...`), matching the pattern in `multisource-fastapi`.
 
 The `/openwebui/*` **proxy routes are excluded** from key validation — they are intended for local use only (the service itself only listens on `localhost:8001`).
 
@@ -380,7 +347,7 @@ ollama pull gemma3:12b
 
 # 3. Start llm-fastapi
 cd llm-fastapi
-python -m venv .venv && source .venv/bin/activate
+conda activate llm-fastapi   # or: python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env if needed (defaults already point to localhost:11434)
@@ -390,6 +357,8 @@ uvicorn main:app --reload --port 8001
 
 - Swagger UI → `http://localhost:8001/docs`
 - Proxy test → `curl http://localhost:8001/openwebui/api/tags`
+- Settings → `curl http://localhost:8001/settings/?key=change-me-secret`
+- Prompts → `curl http://localhost:8001/prompts/?key=change-me-secret`
 
 ---
 
@@ -436,26 +405,11 @@ services:
 
 ---
 
-## 🛠️ Implementation Checklist
-
-- [ ] Scaffold project structure (`main.py`, `config.py`, `routers/`, `services/`, `prompts/`, `schemas.py`)
-- [ ] Implement `services/ollama_client.py` — shared async chat completion caller (no API key)
-- [ ] Write system prompts in `prompts/` for each of the three tasks (instruct model to return raw JSON only)
-- [ ] Implement `routers/queries.py` — parse `message`, call LLM, return `{"output": {"queries": [...]}}`
-- [ ] Implement `routers/userstory.py` — parse `message`, call LLM, validate & return user story list
-- [ ] Implement `routers/insight.py` — parse `story`, call LLM, validate & return insight object
-- [ ] Implement `routers/openwebui_proxy.py` — transparent proxy to `localhost:11434`
-- [ ] Add API-key middleware to `main.py`, exclude `/openwebui/*` routes
-- [ ] Create `.env.example`
-- [ ] Update `multisource-fastapi/.env` webhook URLs
-- [ ] Test proxy: `curl http://localhost:8001/openwebui/api/tags`
-- [ ] Test all three webhook endpoints end-to-end with `multisource-fastapi`
-
----
-
 ## 📝 Notes
 
 - Response shapes are kept **backward-compatible** with existing n8n responses consumed by `multisource-fastapi` (`output.queries`, `output.userStories`, `output`-wrapped insight).
 - System prompts **must** instruct the model to return only raw JSON — no explanation text, no markdown fences. The client strips accidental fences as a safety net.
 - Since Ollama runs locally with no auth, `OLLAMA_BASE_URL` defaults to `http://localhost:11434` and no `Authorization` header is sent.
-- Model tags can be overridden per-endpoint via env vars (`QUERIES_MODEL`, `USERSTORY_MODEL`, `INSIGHT_MODEL`) if different tasks benefit from different models or temperatures.
+- Model tags and hyperparameters can be overridden **at runtime** via the `/settings` API, or **at startup** via `.env` vars (`QUERIES_MODEL`, `USERSTORY_MODEL`, `INSIGHT_MODEL`, `TEMPERATURE`, `MAX_TOKENS`, `TOP_P`).
+- System prompts can be overridden **at runtime** via the `/prompts` API. Changes persist across restarts via JSON files.
+- Runtime overrides are stored in `prompts/_overrides.json` (prompts) and `prompts/_settings_overrides.json` (settings) — both are git-ignored.
