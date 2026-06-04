@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 from config import settings
 from routers.queries import router as queries_router
 from routers.userstory import router as userstory_router
@@ -103,10 +104,13 @@ async def root():
     }
 
 
+# ── Security Scheme for Swagger UI /docs ───────────────────────────────────
+security = HTTPBearer(auto_error=False)
+
 # ── Mount routers ─────────────────────────────────────────────────────────
-app.include_router(queries_router)
-app.include_router(userstory_router)
-app.include_router(insight_router)
+app.include_router(queries_router, dependencies=[Depends(security)])
+app.include_router(userstory_router, dependencies=[Depends(security)])
+app.include_router(insight_router, dependencies=[Depends(security)])
 app.include_router(openwebui_router)
-app.include_router(prompts_router)
-app.include_router(settings_router)
+app.include_router(prompts_router, dependencies=[Depends(security)])
+app.include_router(settings_router, dependencies=[Depends(security)])
