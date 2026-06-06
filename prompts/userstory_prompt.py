@@ -11,7 +11,7 @@ Where content_type is one of: review, news, tweet, mixed, raw.
 For each meaningful user need or requirement you identify, produce a user story object with these fields:
 - who: the user role or persona (e.g., "mobile user", "business owner")
 - what: what the user wants to do or needs
-- why: the reason or motivation behind the need (can be null if not clear)
+- why: the reason or motivation behind the need of what
 - as_a_i_want_so_that: the full user story sentence in "As a [who], I want [what], so that [why]" format
 - evidence: the exact quote or excerpt from the source that supports this story
 - sentiment: one of "positive", "neutral", or "negative"
