@@ -9,6 +9,7 @@ from routers.insight import router as insight_router
 from routers.openwebui_proxy import router as openwebui_router
 from routers.prompts import router as prompts_router
 from routers.settings import router as settings_router
+from routers.models import router as models_router
 from services.settings_manager import get_all_settings
 
 app = FastAPI(
@@ -114,3 +115,4 @@ app.include_router(insight_router, dependencies=[Depends(security)])
 app.include_router(openwebui_router)
 app.include_router(prompts_router, dependencies=[Depends(security)])
 app.include_router(settings_router, dependencies=[Depends(security)])
+app.include_router(models_router, dependencies=[Depends(security)])

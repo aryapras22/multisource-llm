@@ -39,12 +39,14 @@ async def proxy_to_ollama(path: str, request: Request):
     target_url = f"{settings.ollama_base_url}/{path}"
     body = await request.body()
     query_params = dict(request.query_params)
-    
+
     # Forward headers safely (filtering out host to avoid proxying issues)
     # Only forward Content-Type if there's actually a body (solves DELETE/GET body rejection issues in HTTP clients).
     headers = {}
     if body:
-        headers["Content-Type"] = request.headers.get("content-type", "application/json")
+        headers["Content-Type"] = request.headers.get(
+            "content-type", "application/json"
+        )
 
     async def _stream():
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -65,4 +67,3 @@ async def proxy_to_ollama(path: str, request: Request):
         # By default we can fallback to json, but ideally we match what was sent
         media_type=request.headers.get("accept", "application/json"),
     )
-
